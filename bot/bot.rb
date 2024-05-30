@@ -1,16 +1,15 @@
 require 'telegram/bot'
-require 'mechanize'
+require 'selenium-webdriver'
 require 'json'
 require 'dotenv/load'
 require 'sqlite3'
 
-class ItmoAccessBot
+class ITMOBot
   def initialize
-    @agent = Mechanize.new
+    @driver = Selenium::WebDriver.for :firefox
     @sessions = {}
     @db = SQLite3::Database.new 'logs.db'
     create_table
-    @agent.log = Logger.new(STDOUT) # Enable Mechanize logging
   end
 
   def start
@@ -52,43 +51,47 @@ class ItmoAccessBot
     login_url = 'https://my.itmo.ru/login'
 
     begin
-      page = @agent.get(login_url)
-      form = page.forms.find { |f| f.action.include?('login') }
+      @driver.navigate.to login_url
 
-      if form
-        form['username'] = login
-        form['password'] = password
+      # Дождитесь загрузки формы
+      wait = Selenium::WebDriver::Wait.new(timeout: 10)
+      wait.until { @driver.find_element(id: 'kc-form-login') }
 
-        dashboard_page = form.submit
+      # Найти и заполнить форму
+      form = @driver.find_element(id: 'kc-form-login')
+      form.find_element(name: 'username').send_keys(login)
+      form.find_element(name: 'password').send_keys(password)
+      form.submit
 
-        if dashboard_page.uri.to_s.include?('dashboard')
-          @sessions[chat_id] = @agent.cookie_jar
-          return true
-        else
-          puts "Authentication failed: redirected to #{dashboard_page.uri}"
-        end
-      else
-        puts "Login form not found on #{login_url}"
-      end
-    rescue Mechanize::ResponseCodeError => e
-      puts "HTTP Request failed (#{e.response_code}): #{e.message}"
+      # Дождитесь перехода на дашборд
+      wait.until { @driver.current_url.include?('dashboard') || @driver.find_element(css: 'div.user-dashboard') }
+
+      @sessions[chat_id] = @driver.manage.all_cookies
+      true
+    rescue Selenium::WebDriver::Error::TimeoutError, Selenium::WebDriver::Error::NoSuchElementError => e
+      puts "Authentication failed: #{e.message}"
+      false
     end
-
-    false
   end
 
   def fetch_grades(chat_id)
     if @sessions[chat_id]
-      @agent.cookie_jar = @sessions[chat_id]
+      @driver.manage.delete_all_cookies
+      @sessions[chat_id].each { |cookie| @driver.manage.add_cookie(cookie) }
+
       grades_url = 'https://my.itmo.ru/grades'
+      @driver.navigate.to grades_url
 
       begin
-        page = @agent.get(grades_url)
-        grades_data = page.parser.css('.grades') # Update with actual selectors
+        wait = Selenium::WebDriver::Wait.new(timeout: 10)
+        wait.until { @driver.find_element(css: '.grades') }
+
+        grades_data = @driver.find_elements(css: '.grades')
         grades_text = grades_data.map { |grade| grade.text.strip }.join("\n")
         grades_text
-      rescue Mechanize::ResponseCodeError => e
-        puts "HTTP Request failed (#{e.response_code}): #{e.message}"
+      rescue Selenium::WebDriver::Error::TimeoutError => e
+        puts "Fetching grades failed: #{e.message}"
+        nil
       end
     else
       nil
@@ -113,4 +116,4 @@ class ItmoAccessBot
   end
 end
 
-ItmoAccessBot.new.start
+ITMOBot.new.start
