@@ -32,7 +32,7 @@ class ITMOBot
         when '/grades'
           grades = fetch_grades(message.chat.id)
           if grades
-            bot.api.send_message(chat_id: message.chat.id, text: grades)
+            bot.api.send_message(chat_id: message.chat.id, text: grades, parse_mode: 'Markdown')
             log(message.chat.id, "User requested grades")
           else
             bot.api.send_message(chat_id: message.chat.id, text: "Пожалуйста, авторизуйтесь с помощью команды /login")
@@ -63,10 +63,12 @@ class ITMOBot
       form.find_element(name: 'password').send_keys(password)
       form.submit
 
-      # Дождитесь перехода на дашборд
-      wait.until { @driver.current_url.include?('dashboard') || @driver.find_element(css: 'div.user-dashboard') }
+      # Дождитесь перехода на главную страницу после авторизации
+      wait.until { @driver.current_url == 'https://my.itmo.ru/' }
 
+      # Сохранение куки
       @sessions[chat_id] = @driver.manage.all_cookies
+      puts "Cookies saved for session: #{@sessions[chat_id]}"
       true
     rescue Selenium::WebDriver::Error::TimeoutError, Selenium::WebDriver::Error::NoSuchElementError => e
       puts "Authentication failed: #{e.message}"
@@ -79,21 +81,31 @@ class ITMOBot
       @driver.manage.delete_all_cookies
       @sessions[chat_id].each { |cookie| @driver.manage.add_cookie(cookie) }
 
-      grades_url = 'https://my.itmo.ru/grades'
+      grades_url = 'https://my.itmo.ru/points'
       @driver.navigate.to grades_url
 
       begin
         wait = Selenium::WebDriver::Wait.new(timeout: 10)
-        wait.until { @driver.find_element(css: '.grades') }
+        wait.until { @driver.find_element(css: '.b-overlay-wrap.position-relative') }
 
-        grades_data = @driver.find_elements(css: '.grades')
-        grades_text = grades_data.map { |grade| grade.text.strip }.join("\n")
+        grades_container = @driver.find_element(css: '.b-overlay-wrap.position-relative')
+        list_items = grades_container.find_elements(css: '.list-item')
+
+        grades_text = list_items.map do |item|
+          subject = item.find_element(css: 'div:nth-child(1)').text.strip
+          points = item.find_element(css: 'div.col-2 svg text').text.strip
+          "*#{subject}*: #{points}"
+        end.join("\n\n")
+
+        puts "Fetched grades: #{grades_text}" # Логирование для отладки
         grades_text
-      rescue Selenium::WebDriver::Error::TimeoutError => e
+      rescue Selenium::WebDriver::Error::TimeoutError, Selenium::WebDriver::Error::NoSuchElementError => e
         puts "Fetching grades failed: #{e.message}"
         nil
       end
     else
+      puts "No session found for chat_id: #{chat_id}" # Логирование для отладки
+      puts "Sessions: #{@sessions}" # Логирование для отладки
       nil
     end
   end

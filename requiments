@@ -1,4 +1,5 @@
-gem 'telegram-bot-ruby'
-gem 'mechanize'
-gem 'sinatra'
+gem 'telegram/bot'
+gem 'selenium-webdriver'
 gem 'json'
+gem 'dotenv/load'
+gem 'sqlite3'
